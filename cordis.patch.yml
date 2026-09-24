@@ -1,0 +1,29 @@
+# dsh-mcp-market bundle patch.
+# When this package is installed with `dsh plugin --profile web add ...`,
+# the profile auto-appends it to dsh.profile.bundles and applies this layer,
+# so the plugin mounts without any manual cordis.patch.yml editing.
+#
+# These are the defaults. To change them, add a row with the SAME id to your
+# profile's cordis.patch.yml — the profile layer wins, and a patch replaces the
+# row's whole `config`, so restate every key you want to keep.
+#
+#   - id: mcp-market
+#     name: dsh-mcp-market
+#     config:
+#       autoSync: false
+#       intervalHours: 12
+#       maxRequests: 200
+- insert:
+    - id: mcp-market
+      name: dsh-mcp-market
+      config:
+        # 周期性把广场全量索引同步到本地（0.25 ~ 168 小时）。
+        autoSync: true
+        intervalHours: 24
+        # 启动时若本地缓存缺失或已过期（> 6 小时），自动补一次同步。
+        syncOnStart: true
+        # 启动补同步的延迟，给宿主其它插件让出启动带宽。
+        startDelayMs: 15000
+        # 单次同步的请求预算。匿名配额把单条查询锁在 300 条，同步靠关键词
+        # 扇出，所以按请求数计：约 100 次请求覆盖 7132/12520，400 次约 3~5 分钟。
+        maxRequests: 400

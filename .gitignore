@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.tgz
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.verify-home/
+.verify-*/
+coverage/
+*.tsbuildinfo
