@@ -12,7 +12,7 @@
 [modelscope.cn/mcp](https://modelscope.cn/mcp)（1.2 万+ 服务）拉取目录，把每条记录翻译成
 DSH 能用的 MCP 配置，写入 profile 的 `cordis.patch.yml` —— DSH 通过 HMR 热加载，无需重启。
 
-[English](README.md) · [简体中文](README-zh.md) · [Español](README-es.md) · [Português](README-pt.md) · [हिन्दी](README-hi.md)
+[English](README.md) · [简体中文](README-zh.md)
 
 ## Features
 

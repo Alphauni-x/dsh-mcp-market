@@ -13,7 +13,7 @@ from [modelscope.cn/mcp](https://modelscope.cn/mcp) (12,000+ services), translat
 DSH-compatible MCP configuration, and writes it into your profile's `cordis.patch.yml` — where DSH
 hot-reloads it via HMR, no restart required.
 
-[English](README.md) · [简体中文](README-zh.md) · [Español](README-es.md) · [Português](README-pt.md) · [हिन्दी](README-hi.md)
+[English](README.md) · [简体中文](README-zh.md)
 
 ## Features
 
