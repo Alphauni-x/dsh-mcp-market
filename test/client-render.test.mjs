@@ -387,6 +387,31 @@ check("下拉列表走 portal", /portal: true/.test(sourceText));
 check("星标改成图标而不是「星」字", /h\(StarIcon, \{ size: 11 \}\)/.test(sourceText));
 check("星标图标是自绘 SVG", /viewBox: "0 0 16 16"/.test(sourceText) && /fill: "currentColor"/.test(sourceText));
 
+// ─────────────────── 7. 手动添加 MCP 服务器 ───────────────────
+
+check("端点两端接线一致", sourceText.includes('desc("mcpInstaller", "installCustom", ["payload"])'));
+check("调用处走同一方法名", sourceText.includes('call("mcpInstaller", "installCustom", payload)'));
+check("有独立的手动添加对话框", /const CustomDialog = \(/.test(sourceText));
+check("工具栏有入口", sourceText.includes('t("addManual")'));
+check("对话框同时渲染于主页面", sourceText.includes("customOpen") && /onSubmit: addCustom/.test(sourceText));
+check("环境变量支持动态增删", sourceText.includes("MM_kvRow") && sourceText.includes("setEnvRows") && sourceText.includes("removeRow(index)"));
+// 删到只剩一行时补回一个空行，否则表单会没有可填的输入框。
+check("删空后补回一行", /next\.length > 0 \? next : \[\{ key: "", value: "" \}\]/.test(sourceText));
+// 命令与地址互斥：切到远程时不该把 command 一起提交上去。
+check("按传输方式切换字段", /isStdio\s*\n?\s*\? h\(/.test(sourceText) && sourceText.includes("streamable-http"));
+check("参数按空白拆分", /split\(\/\\s\+\/\)/.test(sourceText));
+check("添加后跳到已安装页", /setTab\("installed"\)/.test(sourceText));
+
+// ─────────────────── 8. 命令行摘要框：不要自己的滚动条 ───────────────────
+
+// 踩过的坑：`pre.MM_kv` 是 dialogBody（flex 列）的子项，默认 flex-shrink:1 会把它
+// 压到内容高度以下，配合 overflow:auto 就画出一条滚动条；底色用的是 markdown 代码块
+// 色，和旁边的输入框不是一个体系，看着像「另一个控件」。
+const kvRule = (sourceText.match(/\.MM_kv\{([^}]*)\}/) || [])[1] || "";
+check("命令行摘要框不再自带滚动与限高", kvRule !== "" && !/overflow/.test(kvRule) && !/max-height/.test(kvRule));
+check("命令行摘要框与输入框同底色", /\.MM_kv\{[^}]*background:var\(--dsw-alias-bg-layer-1\)/.test(sourceText));
+check("命令行摘要框不参与压缩", /\.MM_kv\{[^}]*flex:none/.test(sourceText));
+
 // ─────────────────── 汇总 ───────────────────
 
 console.log(`\n结果：${pass} 通过 / ${failures.length} 失败`);

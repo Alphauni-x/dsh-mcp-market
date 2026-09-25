@@ -41,6 +41,11 @@ hot-reloads it via HMR, no restart required.
   indexed services ship a configuration that DSH can use directly (8,377-record measurement; see below).
 - 🩺 **Pre-flight test** — spin up a connection and list its tools *before* committing anything to
   your config file.
+- ✍️ **Add manually** — for servers that are not in the catalogue, or whose fields do not line up,
+  fill in the panel directly: server name, transport (local command vs. remote endpoint), command
+  and arguments (or endpoint), and environment variables as key/value rows you can add or drop.
+  It goes through the **same write path** as a catalogue install — same duplicate and clash checks,
+  same managed block, hot-loaded by DSH with no restart.
 - 🤝 **Plays well with others** — this plugin only ever rewrites its own marked block in
   `cordis.patch.yml`. Other plugins' rows (including `dsh-skill-mcp-panel`) are preserved byte for byte.
 

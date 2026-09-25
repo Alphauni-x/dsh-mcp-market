@@ -20,7 +20,7 @@ import {
   serverNameFromRowId,
   validatePatchText,
 } from "../lib/mcp/patch-editor.js";
-import { patchRowToView, toPatchRow, validateServerInput } from "../lib/mcp/model.js";
+import { configFromCustomInput, patchRowToView, toPatchRow, validateServerInput } from "../lib/mcp/model.js";
 
 let pass = 0;
 let fail = 0;
@@ -151,6 +151,42 @@ check("enabled 默认 true", view.enabled === true);
 check("工具数透传", view.toolCount === 3);
 const viewOff = patchRowToView({ ...mkRow("off"), disabled: true }, {});
 check("disabled 行 enabled=false", viewOff.enabled === false);
+
+console.log("\n[11] 手动添加：表单输入整形");
+const customStdio = configFromCustomInput({
+  serverName: "  my-server  ",
+  transport: "stdio",
+  command: " npx ",
+  args: ["-y", "  ", "@scope/pkg"],
+  cwd: "   ",
+  url: "https://should-be-ignored.example.com",
+  env: { API_KEY: " k ", EMPTY: "", "  ": "x" },
+});
+check("serverName 去空白", customStdio.serverName === "my-server");
+check("command 去空白", customStdio.command === "npx");
+check("args 丢掉空白项", customStdio.args.length === 2 && customStdio.args[1] === "@scope/pkg");
+check("空白 cwd 不写入", customStdio.cwd === undefined);
+check("stdio 不混入 url", customStdio.url === undefined);
+check("env 空键空值被丢弃", Object.keys(customStdio.env).length === 1 && customStdio.env.API_KEY === "k");
+check("整形结果能过校验(stdio)", validateServerInput(customStdio).ok);
+
+const customHttp = configFromCustomInput({
+  serverName: "remote-1",
+  transport: "streamable-http",
+  url: " https://example.com/mcp ",
+  command: "npx",
+  args: ["-y", "pkg"],
+  headers: { Authorization: "Bearer x", "": "drop" },
+});
+check("url 去空白", customHttp.url === "https://example.com/mcp");
+check("http 不混入 command/args", customHttp.command === undefined && customHttp.args === undefined);
+check("headers 保留且去掉空键", customHttp.headers.Authorization === "Bearer x" && Object.keys(customHttp.headers).length === 1);
+check("没有 env 时不写空对象", customHttp.env === undefined);
+check("整形结果能过校验(http)", validateServerInput(customHttp).ok);
+
+// 空表单必须被拦住，否则会把一行没有 command 的配置写进用户的 patch 文件。
+check("空表单整形后仍不合法", !validateServerInput(configFromCustomInput({})).ok);
+check("乱输入不抛异常", typeof configFromCustomInput(undefined) === "object" && !validateServerInput(configFromCustomInput(null)).ok);
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

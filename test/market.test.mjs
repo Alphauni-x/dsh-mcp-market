@@ -159,6 +159,33 @@ console.log("\n[11] 详情链接");
 check("由 publisher 构造", detailUrlOf({ publisher: "@a/b" }) === "https://modelscope.cn/mcp/servers/@a/b");
 check("无 publisher 回落广场首页", detailUrlOf({}) === "https://modelscope.cn/mcp");
 
+console.log("\n[11b] EnvSchema：占位示例值的过滤");
+// 广场把 test_value 当「能跑通的测试值」而不是文档示例：FireCrawl 那类服务的
+// 5 个环境变量 test_value 全是 1，照搬成 placeholder 会被误读成已预填。
+const envServer = normalizeServer({
+  Publisher: "@demo/firecrawl",
+  Name: "firecrawl",
+  EnvSchema: {
+    type: "object",
+    required: ["API_KEY"],
+    properties: {
+      API_KEY: { type: "string", description: "key", test_value: 1 },
+      BASE_URL: { type: "string", test_value: "https://api.example.com" },
+      FLAG: { type: "string", test_value: true },
+      BIG_NUMBER: { type: "string", test_value: "12345" },
+      TINY: { type: "string", test_value: "ab" },
+    },
+  },
+});
+const envByKey = Object.fromEntries(envServer.envSchema.fields.map((field) => [field.key, field]));
+check("数字 test_value 不当示例", envByKey.API_KEY.example === "");
+check("布尔 test_value 不当示例", envByKey.FLAG.example === "");
+check("多位数字也不当示例", envByKey.BIG_NUMBER.example === "");
+check("过短的 test_value 不当示例", envByKey.TINY.example === "");
+check("有信息量的值照常保留", envByKey.BASE_URL.example === "https://api.example.com");
+check("required 判定不受影响", envByKey.API_KEY.required === true && envServer.envSchema.hasRequired === true);
+check("description 不受影响", envByKey.API_KEY.description === "key");
+
 // ───────────────────────── 在线连通 ─────────────────────────
 
 console.log("\n[12] 在线：真实拉取魔搭广场");
