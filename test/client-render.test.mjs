@@ -412,6 +412,48 @@ check("命令行摘要框不再自带滚动与限高", kvRule !== "" && !/overfl
 check("命令行摘要框与输入框同底色", /\.MM_kv\{[^}]*background:var\(--dsw-alias-bg-layer-1\)/.test(sourceText));
 check("命令行摘要框不参与压缩", /\.MM_kv\{[^}]*flex:none/.test(sourceText));
 
+// ─────────────────── 9. 词典完整性 ───────────────────
+
+/**
+ * 这一节拦的是词条本身的问题，语法与渲染测试都抓不到：
+ *
+ *   · 重复键 —— 同一对象里后者覆盖前者。加了「本地命令」这种词条，名字如果和已有的
+ *     重名，运行时静默取到旧值：手动添加对话框的按钮显示成已安装卡片的 `stdio` 标签。
+ *   · 打错的键 —— `t("cwd")` 找不到就原样返回 `cwd`，面板上直接出现这个英文单词。
+ */
+function dictKeysOf(text, marker) {
+  const start = text.indexOf(marker);
+  const keys = [];
+  if (start < 0) return keys;
+  for (const line of text.slice(start).split("\n").slice(1)) {
+    if (/^    \};/.test(line)) break;
+    const hit = line.match(/^      ([A-Za-z_][A-Za-z0-9_]*):/);
+    if (hit) keys.push(hit[1]);
+  }
+  return keys;
+}
+
+const zhKeys = dictKeysOf(sourceText, "    const zh = {");
+const enKeys = dictKeysOf(sourceText, "    const en = {");
+
+for (const [name, keys] of [
+  ["zh", zhKeys],
+  ["en", enKeys],
+]) {
+  const seen = new Set();
+  const dup = keys.filter((key) => (seen.has(key) ? true : (seen.add(key), false)));
+  check(`${name} 词典没有重复键${dup.length ? `（重复：${dup.join(", ")}）` : ""}`, dup.length === 0);
+}
+
+const usedKeys = [...new Set([...sourceText.matchAll(/\bt\("([A-Za-z0-9_]+)"/g)].map((hit) => hit[1]))];
+const missing = (set) => usedKeys.filter((key) => !set.has(key));
+const missingZh = missing(new Set(zhKeys));
+const missingEn = missing(new Set(enKeys));
+check(`t() 用到的键都在 zh 词典里${missingZh.length ? `（缺：${missingZh.join(", ")}）` : ""}`, missingZh.length === 0);
+check(`t() 用到的键都在 en 词典里${missingEn.length ? `（缺：${missingEn.join(", ")}）` : ""}`, missingEn.length === 0);
+// 键名对不上时 t() 不会报错，所以这条必须覆盖到「新加的对话框字段」这类动态文本。
+check("两套词典键集合一致", zhKeys.length === enKeys.length && zhKeys.every((key) => enKeys.includes(key)));
+
 // ─────────────────── 汇总 ───────────────────
 
 console.log(`\n结果：${pass} 通过 / ${failures.length} 失败`);
