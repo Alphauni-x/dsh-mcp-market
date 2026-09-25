@@ -43,7 +43,8 @@ hot-reloads it via HMR, no restart required.
   your config file.
 - ✍️ **Add manually** — for servers that are not in the catalogue, or whose fields do not line up,
   fill in the panel directly: server name, transport (local command vs. remote endpoint), command
-  and arguments (or endpoint), and environment variables as key/value rows you can add or drop.
+  and arguments (or endpoint). Local commands take environment variables; remote endpoints take
+  request headers (e.g. `Authorization: Bearer <token>`) — both as add/drop key-value rows.
   It goes through the **same write path** as a catalogue install — same duplicate and clash checks,
   same managed block, hot-loaded by DSH with no restart.
 - 🤝 **Plays well with others** — this plugin only ever rewrites its own marked block in

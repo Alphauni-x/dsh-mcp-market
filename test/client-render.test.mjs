@@ -394,13 +394,23 @@ check("调用处走同一方法名", sourceText.includes('call("mcpInstaller", "
 check("有独立的手动添加对话框", /const CustomDialog = \(/.test(sourceText));
 check("工具栏有入口", sourceText.includes('t("addManual")'));
 check("对话框同时渲染于主页面", sourceText.includes("customOpen") && /onSubmit: addCustom/.test(sourceText));
-check("环境变量支持动态增删", sourceText.includes("MM_kvRow") && sourceText.includes("setEnvRows") && sourceText.includes("removeRow(index)"));
+check("键值对支持动态增删", sourceText.includes("MM_kvRow") && sourceText.includes("setEnvRows") && sourceText.includes("options.remove(index)"));
 // 删到只剩一行时补回一个空行，否则表单会没有可填的输入框。
 check("删空后补回一行", /next\.length > 0 \? next : \[\{ key: "", value: "" \}\]/.test(sourceText));
 // 命令与地址互斥：切到远程时不该把 command 一起提交上去。
 check("按传输方式切换字段", /isStdio\s*\n?\s*\? h\(/.test(sourceText) && sourceText.includes("streamable-http"));
 check("参数按空白拆分", /split\(\/\\s\+\/\)/.test(sourceText));
 check("添加后跳到已安装页", /setTab\("installed"\)/.test(sourceText));
+
+// 远程服务器的鉴权走请求头：官方 StreamableHttpConfig 只有 url / headers，没有 env。
+// 面板必须给得出这个入口，否则像 Rollinggo 这类要求 Authorization 的服务没法在 UI 里加。
+check("远程模式提供请求头输入区", sourceText.includes('t("headersTitle")'));
+check("请求头走键值对编辑区", sourceText.includes("headerRows") && sourceText.includes("headerEditor"));
+check("环境变量与请求头共用一套编辑器", /const kvEditor = \(options\)/.test(sourceText));
+check("请求头随调用方式切换出现", /isStdio\s*\n?\s*\? kvEditor\(\{/.test(sourceText));
+check("提交时带上 headers", /headers: collect\(headerRows\)/.test(sourceText));
+check("请求头给出 Authorization 示例", sourceText.includes('"Authorization"'));
+check("已安装卡片展示已配的请求头", sourceText.includes("item.headerKeys"));
 
 // ─────────────────── 8. 命令行摘要框：不要自己的滚动条 ───────────────────
 

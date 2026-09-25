@@ -184,6 +184,42 @@ check("headers 保留且去掉空键", customHttp.headers.Authorization === "Bea
 check("没有 env 时不写空对象", customHttp.env === undefined);
 check("整形结果能过校验(http)", validateServerInput(customHttp).ok);
 
+// 两种 transport 的字段是互斥的：官方 StreamableHttpConfig 里没有 env，
+// 塞进去不会报错、但会被 schema 静默丢掉 —— 属于「填了等于没填」，必须拦住。
+const customHttpWithEnv = configFromCustomInput({
+  serverName: "remote-2",
+  transport: "streamable-http",
+  url: "https://example.com/mcp",
+  env: { SHOULD_NOT_SURVIVE: "x" },
+  headers: { Authorization: "Bearer test-token-123" },
+});
+check("http 分支不写 env", customHttpWithEnv.env === undefined);
+check("http 分支认 env 之外的 headers", customHttpWithEnv.headers.Authorization === "Bearer test-token-123");
+check(
+  "header 值只去首尾空白、保留内部空格",
+  configFromCustomInput({
+    serverName: "remote-3",
+    transport: "streamable-http",
+    url: "https://example.com/mcp",
+    headers: { Authorization: "  Bearer a b c  " },
+  }).headers.Authorization === "Bearer a b c",
+);
+
+const customStdioWithHeaders = configFromCustomInput({
+  serverName: "local-1",
+  transport: "stdio",
+  command: "node",
+  headers: { SHOULD_NOT_SURVIVE: "x" },
+});
+check("stdio 分支不写 headers", customStdioWithHeaders.headers === undefined);
+
+const httpRow = toPatchRow(customHttpWithEnv, true);
+check(
+  "headers 能落到 patch 行的 config 上",
+  httpRow.config.headers.Authorization === "Bearer test-token-123" &&
+    patchRowToView(httpRow, {}).headerKeys.join() === "Authorization",
+);
+
 // 空表单必须被拦住，否则会把一行没有 command 的配置写进用户的 patch 文件。
 check("空表单整形后仍不合法", !validateServerInput(configFromCustomInput({})).ok);
 check("乱输入不抛异常", typeof configFromCustomInput(undefined) === "object" && !validateServerInput(configFromCustomInput(null)).ok);
