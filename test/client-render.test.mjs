@@ -409,8 +409,18 @@ check("请求头走键值对编辑区", sourceText.includes("headerRows") && sou
 check("环境变量与请求头共用一套编辑器", /const kvEditor = \(options\)/.test(sourceText));
 check("请求头随调用方式切换出现", /isStdio\s*\n?\s*\? kvEditor\(\{/.test(sourceText));
 check("提交时带上 headers", /headers: collect\(headerRows\)/.test(sourceText));
-check("请求头给出 Authorization 示例", sourceText.includes('"Authorization"'));
+// 输入提示词要跟环境变量区一模一样：早先这里用的是硬编码英文占位
+// （Authorization / Bearer <token>），两个区看着不像同一套控件。
+check(
+  "请求头复用环境变量的输入提示",
+  (sourceText.match(/keyPlaceholder: t\("envKey"\)/g) || []).length === 2 &&
+    (sourceText.match(/valuePlaceholder: t\("envValue"\)/g) || []).length === 2 &&
+    !sourceText.includes('"Authorization"'),
+);
 check("已安装卡片展示已配的请求头", sourceText.includes("item.headerKeys"));
+
+// 「工具会以 mcp__{name}__<工具名> 注册，只能是…」被指为不像产品文案。
+check("服务标识提示改成命名空间说法", sourceText.includes("该名称作为工具的命名空间前缀"));
 
 // ─────────────────── 8. 命令行摘要框：不要自己的滚动条 ───────────────────
 
@@ -463,6 +473,32 @@ check(`t() 用到的键都在 zh 词典里${missingZh.length ? `（缺：${missi
 check(`t() 用到的键都在 en 词典里${missingEn.length ? `（缺：${missingEn.join(", ")}）` : ""}`, missingEn.length === 0);
 // 键名对不上时 t() 不会报错，所以这条必须覆盖到「新加的对话框字段」这类动态文本。
 check("两套词典键集合一致", zhKeys.length === enKeys.length && zhKeys.every((key) => enKeys.includes(key)));
+
+// ─────────────────── 10. 测试连接的提示 ───────────────────
+
+/**
+ * 踩过的坑：`testState` 存了两种形状 —— 进行中是裸字符串 `"running"`，结果是
+ * `{ state, text }` 对象。渲染却统一拿 `testState === "ok"` 去比，对象永远不等于
+ * 字符串，于是**连接成功后什么提示都不出现**，「测试连接」看起来像没反应。
+ *
+ * 断言分三层：结果形状统一、取值按 `.state`、成功时必须带上工具数量。
+ */
+check("测试态统一成对象形状", !/\[item\.serverName\]: "running"/.test(sourceText));
+check("进行中态也带 state", /\[item\.serverName\]: \{ state: "running" \}/.test(sourceText));
+check("渲染按 .state 取态，不拿对象比字符串", /testState\?\.state === "ok"/.test(sourceText) && /testState\?\.state === "fail"/.test(sourceText));
+check("不再用 testState === \"ok\" 这种比法", !/testState === "ok"/.test(sourceText) && !/testState === "fail"/.test(sourceText));
+check("按钮的进行中判断同样走 .state", /testState\?\.state === "running"/.test(sourceText));
+check("成功提示带工具数量", /t\("testOk", \{ n: tools\.length \}\)/.test(sourceText));
+check("测试成功提示是成功色", /testState\?\.state === "ok" \? h\("p", \{ className: "MM_ok"/.test(sourceText));
+check("失败提示是错误色", /testState\?\.state === "fail" \? h\("p", \{ className: "MM_err"/.test(sourceText));
+// 成功时顺带把工具名列出来（可选项），超过上限截断，避免 30 个工具撑爆卡片。
+check("成功后列出工具名", sourceText.includes('t("testTools")') && sourceText.includes("toolNamesText"));
+check("工具名超限截断", /TOOL_NAME_CAP = 8/.test(sourceText) && /t\("testToolsMore", \{ n: rest \}\)/.test(sourceText));
+check("工具名在缺字段时不炸", /typeof tool\?\.name === "string"/.test(sourceText));
+// 工具名列表必须锁成单行：实测 8 个名字在 320px 卡里换行到 4 行，卡片高度被拉高、同一行
+// 的其它卡片跟着变形。换成 nowrap+ellipsis，完整名单放进 title。
+check("工具名单行省略", /className: "MM_cardMeta", title: testState\.names\.join/.test(sourceText));
+check("完整工具名可从 title 看到", /title: testState\.names\.join\(t\("listSep"\)\)/.test(sourceText));
 
 // ─────────────────── 汇总 ───────────────────
 
