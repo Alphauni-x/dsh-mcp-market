@@ -53,17 +53,17 @@ hot-reloads it via HMR, no restart required.
 ## Install
 
 ```bash
-dsh plugin --profile web add dsh-mcp-market
+dsh plugin --profile <profile> add dsh-mcp-market
 ```
 
 Or from a tarball:
 
 ```bash
-dsh plugin --profile web add ./dsh-mcp-market-0.1.0.tgz
+dsh plugin --profile <profile> add ./dsh-mcp-market-0.1.0.tgz
 ```
 
 The bundle patch mounts the plugin automatically — no manual `cordis.patch.yml` editing.
-Restart the web profile once, then open **MCP Market** in the left sidebar.
+Restart that profile once, then open **MCP Market** in the left sidebar.
 
 > **On pnpm 9:** if the install fails with
 > `ERR_PNPM_ADDING_TO_ROOT — Running this command will add the dependency to the workspace root`,
@@ -71,7 +71,7 @@ Restart the web profile once, then open **MCP Market** in the left sidebar.
 > treats as a workspace root. Do what the message says and add `-w`:
 >
 > ```bash
-> dsh plugin --profile web add -w dsh-mcp-market
+> dsh plugin --profile <profile> add -w dsh-mcp-market
 > ```
 >
 > pnpm 10+ dropped this check, so you will not hit it there. It is a pnpm/DSH interaction, unrelated
@@ -150,6 +150,173 @@ shares an in-flight lock with the manual button.
 The remaining gap is covered at search time: when you type a query, the panel asks the marketplace
 live as well and merges both result sets.
 
+### Why stdio MCPs fail in the desktop app (launched from the Dock)
+
+The desktop build (`DeepSeek Harness.app`) inherits only launchd's default `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`) when started from the Dock or Finder — none of which contains
+the user's own `npx` / `uvx` / `pnpm`, and those are exactly what most marketplace stdio servers
+use as their command. The symptom is `连接失败：spawn uvx ENOENT`: **HTTP servers keep working,
+every local-command server fails.** It looks like "some servers are broken" when in fact the
+launch method simply left a few directories out of the host environment.
+
+Launching the same app from a terminal is unaffected (`zsh` has already exported the paths from
+`.zprofile` / `.zshrc`), so this is about *how the app was started*, not about a wrong config.
+
+The plugin repairs it by itself: on load, any candidate directory that exists but is missing from
+the host `PATH` (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, …) is
+prepended to `process.env.PATH`. Writing that one place is enough — the official
+`@deepseek-ai/dsh-mcp-client` builds child environments from the very same `process.env`, so the
+**connection test and the real startup are fixed together**, with no config file touched.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `fixHostPath` | `true` | set to `false` to never touch the host `PATH` |
+| `probeLoginShell` | `true` | also ask the login shell (`$SHELL -lc`) for its full `PATH` (falling back to `/bin/zsh` → `/bin/bash` → `/bin/sh` when `$SHELL` is unset); set to `false` to use only the built-in candidates |
+
+Boundaries:
+
+- prepend only — not a single inherited entry is dropped; only directories that **exist** and are
+  not already on the `PATH` are added;
+- when the host `PATH` is already fine (e.g. terminal launch) **not a byte is changed**;
+- once every directory is present the pending set is empty, so repeated loads are idempotent;
+- disabled on Windows (different separator and `PATHEXT` semantics);
+- a **runtime** repair: no file is written, and restarting the app restores the system as it was.
+
+To keep control yourself, set `fixHostPath: false` and put a `PATH` in the `env` of the row
+instead (`config.env` merges after the parent environment, and the official client and the plugin's
+probe behave identically):
+
+```yaml
+- id: mcp-market-fetch
+  name: "@deepseek-ai/dsh-mcp-client"
+  config:
+    transport: stdio
+    command: uvx
+    args: [mcp-server-fetch]
+    env:
+      PATH: /Users/you/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+### Why "Test connection" answers instantly
+
+A stdio connection spends nearly all of its time on **startup**, not on the protocol itself.
+Measured with the real SDK:
+
+| Scenario | connect | listTools | close | Total |
+|---|---|---|---|---|
+| `uvx` stdio, **first run** | 5023ms | 4ms | 74ms | 5.1s |
+| Same server, **second run on** | ~475ms | 2ms | 71ms | 545ms |
+| HTTP transport | 128ms | 69ms | 1ms | 197ms |
+
+`uvx --help` takes 14ms — the uv binary is not the problem; it is the per-run rebuild of the
+package environment. `listTools` itself costs 2ms. So every optimisation targets "stop paying
+the startup cost twice":
+
+1. **A running server is read from the host**: the live connection already exists, so its
+   registered tools are read straight from the host instead of spawning another process
+   (545ms → sub-millisecond).
+2. **Closing is off the return path**: the result is handed back immediately and the child
+   process is reaped in the background (~70ms saved).
+3. **The button shows elapsed seconds**: a first run can take several seconds, and a frozen
+   "Testing…" is harder to wait for than a ticking counter.
+
+There is a boundary worth keeping on point 1: a row only counts as live when the fiber is
+`active` **and** at least one tool is registered. A stdio server that fails to start still leaves
+the fiber `active` (the official default is `failOnStartupError: false`) — only the tool count
+stays honestly at 0. Those rows go through a real connection, otherwise you would be shown
+"Connected, 0 tools", which is harder to debug than an outright error.
+
+Remember this signature when debugging: **green dot + `stdio` + 0 tools = it never started.**
+
+### "Connection closed": where the reason went, and why some servers never install
+
+Once the `PATH` fix lands, the error changes from `spawn npx ENOENT` to
+`MCP error -32000: Connection closed`. That is progress, not a new fault: the process
+started, and then crashed on its own. But the interface still shows nothing useful — the
+reason is printed to the child's stderr, and the transport defaults to `stderr: "inherit"`,
+so those lines go straight to the host's stderr and never reach the panel.
+
+Stdio transports now use `stderr: "pipe"` and fold the tail (6 lines / 2 KB max, ANSI
+colour codes stripped) into the error:
+
+```
+Connection failed: MCP error -32000: Connection closed
+子进程输出：
+boom: cannot find module '@modelcontextprotocol/sdk/types.js'
+详情：模块解析失败，请检查依赖是否装全
+```
+
+The `子进程输出：` header is verbatim: host-side probe messages are still Chinese-only,
+unlike the panel's bilingual copy. The child's own output is passed through untouched.
+
+There is a second, nastier trap: **"Test connection" kills the install it is waiting on.**
+
+The first `npx -y <pkg>` run has to download the package into `~/.npm/_npx/<hash>/`. One
+real case (`12306-mcp`) pulls 200+ dependencies and ran **8m44s** without finishing
+`node_modules`, while the 15-second probe timeout had long since killed it. What npm leaves
+behind after an interrupted unpack does not self-heal:
+
+- the nested `node_modules` is an empty directory;
+- `.package-lock.json` records the dependency as `{}`;
+- a pile of `.pkg-<random>` staging directories is left around.
+
+npx never repairs that state — so every tap on "Test connection" interrupts the install
+again, forever. The current handling:
+
+| Stage | Behaviour |
+|---|---|
+| Cold-start detection | Command is `npx` and `~/.npm/_npx` has no such package → cold |
+| Budget | 60 s when cold (15 s stays the warm budget) |
+| **On timeout** | **The process is not killed** — it keeps running for 3 minutes to finish |
+| Panel | After 5 s it says "first run downloads dependencies…" and shows elapsed seconds |
+| Button | Disabled while testing — two package runners writing one cache only makes it worse |
+
+So "test once → wait a minute → test again" succeeds, and the wait is visibly making progress.
+
+Detection is deliberately conservative: only `npx` can be checked precisely; `uvx` / `pnpx` /
+`bunx` all report "unknown" and are treated as warm. Better to skip a long budget than to make
+every server wait a minute.
+
+If you are already stuck on a broken cache, the plugin now recognises it and puts the path
+straight into the error:
+
+```
+Connection failed: MCP error -32000: Connection closed
+子进程输出：
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Users/you/.npm/_npx/a1b2c3d4e5f60718/node_modules/mcp-http-server/node_modules/@modelcontextprotocol/sdk/types.js'
+这个包的缓存不完整（上次安装被中断，留下一个空壳目录），npx 不会自动修复。清掉后重装即可：rm -rf "/Users/you/.npm/_npx/a1b2c3d4e5f60718"，再在终端里跑一次 npx -y <包名> 等它装完。
+```
+
+There are two ways out: **repair in place** (fast, recommended) or **start over** (slow, but
+guaranteed clean).
+
+npm keeps downloaded packages in its content-addressed store at `~/.npm/_cacache`, so
+re-unpacking them needs no download:
+
+```bash
+D=~/.npm/_npx/<hash>          # the path from the error
+
+# Half-finished debris: `.pkg-<random>` staging directories npm left mid-unpack
+find "$D/node_modules" -maxdepth 1 -type d -name '.*-*' -delete
+# Empty shells: the directory exists but has no files — this is what npx keeps loading from
+find "$D/node_modules" -type d -empty -delete
+
+cd "$D" && npm install        # unpack whatever package-lock.json says is missing
+```
+
+Only empty directories and npm's own staging leftovers are removed — neither holds real data,
+and the packages that did install are left alone.
+
+If you would rather start clean, delete the whole directory. Note that you **must reuse the
+exact command from your config**: npx derives the cache directory name from the command, so a
+different command installs somewhere else entirely.
+
+```bash
+rm -rf ~/.npm/_npx/<hash>
+npx -y <pkg>     # the command from your MCP config; it starts and stays there once installed — wait, then Ctrl+C
+```
+
 ## Scheduled sync
 
 Two triggers, one shared lock — a manual sync and a scheduled one never run at the same time:
@@ -194,7 +361,12 @@ node test/patch.test.mjs         # config-file safety (rewrite, coexistence, val
 node test/market.test.mjs        # filtering, conversion, diffing + live catalogue checks
 node test/scheduler.test.mjs     # sync schedule: config clamping, lifecycle, concurrency
 node test/keywords.test.mjs      # keyword fan-out + the 300-row anonymous cap
-node test/status.test.mjs        # loader entry lookup, fiber phase, registered tool count
+node test/status.test.mjs        # loader entry lookup, fiber phase, registered tools and their names
+node test/host-path.test.mjs     # host PATH repair: idempotence, prepend-only, fallbacks, switches
+node test/package-runner.test.mjs # runner detection + cold-start check (never guesses)
+node test/gateway-live.test.mjs  # reading a running server from the host (incl. "green dot lies" fallback)
+node test/probe-close.test.mjs   # probing: closing off the return path + millisecond-fast failures
+node test/probe-recovery.test.mjs # stderr pass-through + not killing a cold-start install + broken-cache hint
 node test/client-render.test.mjs # renders the client bundle without a browser + source guards
 node test/wire-contract.test.mjs # host manifest ↔ client contribution parity + reserved names
 ```

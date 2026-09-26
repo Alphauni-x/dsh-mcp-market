@@ -43,16 +43,16 @@ DSH 能用的 MCP 配置，写入 profile 的 `cordis.patch.yml` —— DSH 通�
 ## Install
 
 ```bash
-dsh plugin --profile web add dsh-mcp-market
+dsh plugin --profile <profile> add dsh-mcp-market
 ```
 
 或从 tarball 安装：
 
 ```bash
-dsh plugin --profile web add ./dsh-mcp-market-0.1.0.tgz
+dsh plugin --profile <profile> add ./dsh-mcp-market-0.1.0.tgz
 ```
 
-bundle patch 会自动挂载，无需手工编辑 `cordis.patch.yml`。重启一次 web profile，
+bundle patch 会自动挂载，无需手工编辑 `cordis.patch.yml`。重启一次该 profile，
 然后点左侧栏的「MCP 广场」。
 
 > **pnpm 9 用户注意**：如果安装时报
@@ -61,7 +61,7 @@ bundle patch 会自动挂载，无需手工编辑 `cordis.patch.yml`。重启一
 > 被 pnpm 当成了 workspace 根。按它自己的提示补一个 `-w` 即可：
 >
 > ```bash
-> dsh plugin --profile web add -w dsh-mcp-market
+> dsh plugin --profile <profile> add -w dsh-mcp-market
 > ```
 >
 > pnpm 10 及以后取消了这项检查，不会遇到。这是 pnpm 与 DSH 的交互问题，与本插件无关。
@@ -134,7 +134,154 @@ Cordis host 插件
 
 剩余缺口在搜索时补齐：输入关键词时，面板会同时向广场发起实时查询并合并两边结果。
 
-## Scheduled sync
+### 桌面版从 Dock 启动时，stdio 型 MCP 为什么起不来
+
+桌面版（`DeepSeek Harness.app`）从 Dock / Finder 启动时，宿主进程只继承 launchd 的
+默认 `PATH`（`/usr/bin:/bin:/usr/sbin:/sbin`），里面**没有用户自己装的
+`npx` / `uvx` / `pnpm`** —— 而广场里绝大多数 stdio 型 MCP 的启动命令正好是它们。
+症状就是 `连接失败：spawn uvx ENOENT`：**HTTP 型的服务照常可用，本地命令型的一律失败**，
+看起来像「有的服务坏了」，其实是启动方式导致宿主少了几个目录。
+
+从终端直接跑同一个 app 不会有这个问题（`zsh` 已经把 `.zprofile` / `.zshrc` 里的
+`PATH` 都 export 好了），所以这是**启动方式**的问题，不是配置写错了。
+
+插件默认自己修：启动时若发现候选目录（`~/.local/bin`、`/opt/homebrew/bin`、
+`/usr/local/bin`、`/opt/local/bin` …）不在宿主 `PATH` 上，就把它们补进
+`process.env.PATH`。补这一处就够 —— 官方 `@deepseek-ai/dsh-mcp-client` 拼子进程环境时
+读的正是同一份 `process.env`，所以**「测试连接」与官方真实启动会同时修好**，
+而且不需要改写任何配置文件。
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `fixHostPath` | `true` | 关掉则完全不碰宿主 `PATH` |
+| `probeLoginShell` | `true` | 补 `PATH` 时额外用 `$SHELL -lc` 取登录 shell 的完整 `PATH`（`$SHELL` 缺失时回落到 `/bin/zsh` → `/bin/bash` → `/bin/sh`）；关掉则只用内置候选目录 |
+
+几条边界：
+
+- 只 **prepend**，原有条目一个不丢；只补**实际存在**且原本不在 `PATH` 上的目录；
+- 宿主 `PATH` 本来就没问题（例如从终端启动）时**一个字节都不改**；
+- 目录都已在 `PATH` 上时待补集合为空，所以重复加载是幂等的；
+- Windows 上不启用（分隔符与 `PATHEXT` 语义不同）；
+- 这是**运行期**修正，不写任何配置文件，重启 app 即回到系统原状。
+
+想自己掌控的话，把 `fixHostPath` 设为 `false`，再在对应 MCP 行的 `env` 里补一条 `PATH`
+（`config.env` 的合并优先级高于父进程，官方客户端与插件的探测行为一致）：
+
+```yaml
+- id: mcp-market-fetch
+  name: "@deepseek-ai/dsh-mcp-client"
+  config:
+    transport: stdio
+    command: uvx
+    args: [mcp-server-fetch]
+    env:
+      PATH: /Users/you/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+### 「测试连接」为什么能秒回
+
+一次 stdio 连接的耗时几乎全在**启动**上，跟协议本身没关系。用真实 SDK 分段实测：
+
+| 场景 | connect | listTools | close | 总计 |
+|---|---|---|---|---|
+| `uvx` stdio **首次** | 5023ms | 4ms | 74ms | 5.1s |
+| 同一条**第二次起** | ~475ms | 2ms | 71ms | 545ms |
+| HTTP 型 | 128ms | 69ms | 1ms | 197ms |
+
+`uvx --help` 只要 14ms —— 慢的不是 uv 这个二进制，而是它每次都要**重建一遍包的运行环境**；
+`listTools` 本身只有 2ms。所以优化都冲着「别重复付启动成本」去：
+
+1. **已装载的服务直接读宿主状态**：宿主里那份连接本来就是活的，直接问它要已注册的工具，
+   不再另起一个进程（实测 545ms → 毫秒级）。
+2. **关闭动作移出返回路径**：结果一出来就返回，回收子进程放后台（省约 70ms）。
+3. **按钮显示已耗时秒数**：首次连接要重建环境、可能好几秒，静止的「测试中…」最难熬。
+
+第 1 条有个必须守住的**边界**：只有「fiber 处于 `active` **且确实注册了工具**」才算命中。
+stdio 服务起不来时插件 fiber 照样是 `active`（官方默认 `failOnStartupError: false`），
+只有工具数会诚实地停在 0 —— 这种会照常走真连。否则你会看到「连接成功，0 个工具」，
+比直接报错更难排查。
+
+排查时记住这条签名：**绿点 + `stdio` + 0 个工具 = 必然起不来**，别只看那个点。
+
+### 「Connection closed」：失败原因去哪了，以及为什么有的服务「永远装不上」
+
+`PATH` 修好之后，报错会从 `spawn npx ENOENT` 变成 `MCP error -32000: Connection closed`。
+这是**进步**而不是新故障：进程起来了，才轮到它自己崩。但界面上依然什么都看不出来 ——
+因为原因只打在子进程的 stderr 上，而传输层默认 `stderr: "inherit"`，那些字直接写进了
+宿主的 stderr，面板一个字节都收不到。
+
+现在改成 `stderr: "pipe"`，把尾部几行（最多 6 行 / 2KB，ANSI 颜色码剥掉）拼进报错里：
+
+```
+连接失败：MCP error -32000: Connection closed
+子进程输出：
+boom: cannot find module '@modelcontextprotocol/sdk/types.js'
+详情：模块解析失败，请检查依赖是否装全
+```
+
+同时还有个更容易踩的坑：**点「测试连接」会在超时后杀掉正在安装的进程**。
+
+`npx -y <pkg>` 第一次运行要先把包下到 `~/.npm/_npx/<hash>/`。实测 `12306-mcp`
+要装 200+ 个依赖，跑了 **8 分 44 秒**还没建完 `node_modules`，而 15 秒的探测超时
+早就把它掐了。麻烦的是 npm 被中途杀死留下的是**半成品**：
+
+- 嵌套的 `node_modules` 是空目录；
+- `.package-lock.json` 里把依赖记成 `{}`；
+- 旁边留着一堆 `.pkg-随机串` 暂存目录。
+
+npx 不会自愈这种状态 —— 于是「点一次测试连接 = 掐断一次安装」，永远装不上。
+
+现在的处理是：
+
+| 环节 | 行为 |
+|---|---|
+| 冷启动判定 | 命令是 `npx` 且 `~/.npm/_npx` 里没有这个包 → 判定为冷启动 |
+| 预算 | 冷启动给 60 秒（热启动仍是 15 秒） |
+| **超时后** | **不杀进程**，放它继续跑 3 分钟把包装完 |
+| 面板 | 超过 5 秒显示「首次运行需要下载依赖…」，并按秒计已耗时 |
+| 按钮 | 测试期间禁用 —— 连点会让两个包运行器同时往同一份缓存里写 |
+
+于是「点一次 → 等一分钟 → 再点一次」就能成功，中途的等待是有进展的。
+
+判定刻意保守：只有 `npx` 能精确查缓存，`uvx` / `pnpx` / `bunx` 一律返回「不知道」
+（按热启动处理）—— 宁可少给一次长预算，也不要让每个服务都干等一分钟。
+
+如果已经卡在坏掉的缓存上，插件会自己认出来，并把路径直接写进报错：
+
+```
+连接失败：MCP error -32000: Connection closed
+子进程输出：
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Users/you/.npm/_npx/a1b2c3d4e5f60718/node_modules/mcp-http-server/node_modules/@modelcontextprotocol/sdk/types.js'
+这个包的缓存不完整（上次安装被中断，留下一个空壳目录），npx 不会自动修复。清掉后重装即可：rm -rf "/Users/you/.npm/_npx/a1b2c3d4e5f60718"，再在终端里跑一次 npx -y <包名> 等它装完。
+```
+
+修起来有两种：**只补缺的部分**（快，推荐）或**整目录重来**（慢，但一定干净）。
+
+npm 把下好的包放在内容寻址缓存 `~/.npm/_cacache` 里，所以补解包不用重新下载：
+
+```bash
+D=~/.npm/_npx/<hash>          # 报错里给的路径
+
+# 半成品垃圾：npm 解包到一半留下的 `.包名-随机串` 暂存目录
+find "$D/node_modules" -maxdepth 1 -type d -name '.*-*' -delete
+# 空壳目录：壳建好了、文件还没填 —— 正是它让 npx 每次从空处加载
+find "$D/node_modules" -type d -empty -delete
+
+cd "$D" && npm install        # 按 package-lock.json 把缺的解回来
+```
+
+删掉的只有「目录存在但内容为空」和 npm 自己的中间产物，都不含有效数据；真正下好的包原样保留。
+
+不想深究就整目录删掉重来 —— 注意**必须用配置里那条一模一样的命令**，因为 npx 的
+缓存目录名是由命令算出来的，换一条命令会装到另一个目录里去：
+
+```bash
+rm -rf ~/.npm/_npx/<hash>
+npx -y <pkg>     # 就是 MCP 配置里的命令；装完它会启动并停在那里，稍等一会儿按 Ctrl+C 退出
+```
+
+## 定时同步
 
 两个触发点共用同一把锁 —— 手动同步与定时同步绝不会同时跑：
 
@@ -177,7 +324,12 @@ node test/patch.test.mjs         # 配置文件安全性（改写、共存、校
 node test/market.test.mjs        # 过滤、转换、增量比对 + 在线目录检查
 node test/scheduler.test.mjs     # 同步调度：配置收敛、生命周期、并发去重
 node test/keywords.test.mjs      # 关键词扇出 + 300 条匿名配额
-node test/status.test.mjs        # loader 条目查找、fiber 阶段、已注册工具数
+node test/status.test.mjs        # loader 条目查找、fiber 阶段、已注册工具数与工具名
+node test/host-path.test.mjs     # 宿主 PATH 补齐：幂等、只 prepend、失败降级、开关
+node test/package-runner.test.mjs # 包运行器识别 + 冷启动判定（拿不准时不下结论）
+node test/gateway-live.test.mjs  # 已装载服务的宿主直读（含「绿点撒谎」时退回真连）
+node test/probe-close.test.mjs   # 探测的关闭不阻塞返回 + 失败要毫秒级返回
+node test/probe-recovery.test.mjs # stderr 透传 + 冷启动超时不掐断安装 + 坏缓存诊断
 node test/client-render.test.mjs # 不开浏览器渲染客户端 bundle + 源码契约守卫
 node test/wire-contract.test.mjs # host manifest ↔ 客户端 CONTRIBUTION 一致性 + 保留字
 ```
