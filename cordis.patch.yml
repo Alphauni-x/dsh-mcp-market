@@ -1,5 +1,5 @@
 # dsh-mcp-market bundle patch.
-# When this package is installed with `dsh plugin --profile web add ...`,
+# When this package is installed with `dsh plugin --profile <profile> add ...`,
 # the profile auto-appends it to dsh.profile.bundles and applies this layer,
 # so the plugin mounts without any manual cordis.patch.yml editing.
 #
@@ -27,3 +27,12 @@
         # 单次同步的请求预算。匿名配额把单条查询锁在 300 条，同步靠关键词
         # 扇出，所以按请求数计：约 100 次请求覆盖 7132/12520，400 次约 3~5 分钟。
         maxRequests: 400
+        # 桌面版从 Dock 启动时，宿主只继承 launchd 的默认 PATH，里面没有用户
+        # 自己装的 npx / uvx / pnpm，stdio 型 MCP 会一律 ENOENT。开启后会把
+        # ~/.local/bin 等候选目录补进宿主 process.env.PATH —— 官方 MCP 客户端
+        # 读的是同一份 process.env，所以「测试连接」与真实启动会同时修好，
+        # 且不写任何配置文件。详见 lib/mcp/host-path.js。
+        fixHostPath: true
+        # 补 PATH 时是否额外用 $SHELL -lc 取登录 shell 的完整 PATH（覆盖 nvm、
+        # pnpm 等自定义目录）。关掉则只用内置候选目录。
+        probeLoginShell: true
