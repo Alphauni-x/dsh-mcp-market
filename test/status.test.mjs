@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { fiberPhaseOf, getLoaderEntry, mcpToolCount, waitForLoaderState } from "../lib/mcp/status.js";
+import { fiberPhaseOf, getLoaderEntry, mcpToolCount, mcpToolNames, waitForLoaderState } from "../lib/mcp/status.js";
 
 let pass = 0;
 const failures = [];
@@ -96,7 +96,31 @@ check("schemas 不是函数返回 0", mcpToolCount({ tools: { schemas: 1 } }, "m
 check("schemas 返回非数组返回 0", mcpToolCount({ tools: { schemas: () => null } }, "memory") === 0);
 check("schemas 抛错不炸", mcpToolCount({ tools: { schemas: () => { throw new Error("boom"); } } }, "memory") === 0);
 
-// ─────────────────── [4] waitForLoaderState ───────────────────
+// ─────────────────── [4] mcpToolNames ───────────────────
+
+console.log("\n[4] mcpToolNames");
+// 「测试连接」对已装载的服务直接读这里，省掉一次真连；名字必须剥干净前缀，
+// 否则界面上会显示成 mcp__memory__search_nodes 而不是 search_nodes。
+const named = mcpToolNames({ tools }, "memory");
+check("返回剥掉前缀的工具名", named.length === 3 && named.includes("search_nodes"));
+check("名字里不带 mcp__ 前缀", named.every((name) => !name.startsWith("mcp__")));
+check("顺序与宿主一致", named[0] === "create_entities" && named[2] === "open_nodes");
+check("不夹带别的服务的工具", !named.includes("list_mcp_resources") && !named.includes("bash"));
+check("无匹配服务返回空数组", Array.isArray(mcpToolNames({ tools }, "nope")) && mcpToolNames({ tools }, "nope").length === 0);
+check("没有 tools 服务返回空数组", mcpToolNames({}, "memory").length === 0);
+check("schemas 抛错返回空数组", mcpToolNames({ tools: { schemas: () => { throw new Error("boom"); } } }, "memory").length === 0);
+check("schemas 返回非数组返回空数组", mcpToolNames({ tools: { schemas: () => null } }, "memory").length === 0);
+check("serverName 为空返回空数组", mcpToolNames({ tools }, "").length === 0);
+check("serverName 非字符串返回空数组", mcpToolNames({ tools }, 42).length === 0);
+// 名字恰好只等于前缀（`mcp__memory__`）时剥完是空串，不该出现在列表里 ——
+// 界面上会渲染成一个看不见的条目。
+check(
+  "剥完为空的名字被丢弃",
+  mcpToolNames({ tools: { schemas: () => [{ name: "mcp__memory__" }, { name: "mcp__memory__ok" }] } }, "memory").join(",") === "ok",
+);
+check("计数与名字列表同源", mcpToolCount({ tools }, "memory") === named.length);
+
+// ─────────────────── [5] waitForLoaderState ───────────────────
 
 console.log("\n[4] waitForLoaderState");
 const ctx = ctxWith([entryOf("include:mcp-market-memory", 2)]);

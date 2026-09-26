@@ -484,11 +484,14 @@ check("两套词典键集合一致", zhKeys.length === enKeys.length && zhKeys.e
  * 断言分三层：结果形状统一、取值按 `.state`、成功时必须带上工具数量。
  */
 check("测试态统一成对象形状", !/\[item\.serverName\]: "running"/.test(sourceText));
-check("进行中态也带 state", /\[item\.serverName\]: \{ state: "running" \}/.test(sourceText));
+check("进行中态也带 state", /\[item\.serverName\]: \{ state: "running", startedAt: Date\.now\(\) \}/.test(sourceText));
 check("渲染按 .state 取态，不拿对象比字符串", /testState\?\.state === "ok"/.test(sourceText) && /testState\?\.state === "fail"/.test(sourceText));
 check("不再用 testState === \"ok\" 这种比法", !/testState === "ok"/.test(sourceText) && !/testState === "fail"/.test(sourceText));
 check("按钮的进行中判断同样走 .state", /testState\?\.state === "running"/.test(sourceText));
-check("成功提示带工具数量", /t\("testOk", \{ n: tools\.length \}\)/.test(sourceText));
+check(
+  "成功提示带工具数量",
+  /t\(result\?\.source === "host" \? "testOkHost" : "testOk", \{ n: tools\.length \}\)/.test(sourceText),
+);
 check("测试成功提示是成功色", /testState\?\.state === "ok" \? h\("p", \{ className: "MM_ok"/.test(sourceText));
 check("失败提示是错误色", /testState\?\.state === "fail" \? h\("p", \{ className: "MM_err"/.test(sourceText));
 // 成功时顺带把工具名列出来（可选项），超过上限截断，避免 30 个工具撑爆卡片。
@@ -499,6 +502,44 @@ check("工具名在缺字段时不炸", /typeof tool\?\.name === "string"/.test(
 // 的其它卡片跟着变形。换成 nowrap+ellipsis，完整名单放进 title。
 check("工具名单行省略", /className: "MM_cardMeta", title: testState\.names\.join/.test(sourceText));
 check("完整工具名可从 title 看到", /title: testState\.names\.join\(t\("listSep"\)\)/.test(sourceText));
+
+// 连接测试要显示已耗时。stdio 型每次都要重建运行环境（实测热启动 545ms、首次 5s），
+// 一个静止的「测试中…」最难熬；秒数在动，等待就有了刻度。
+check("进行中态记录起始时间", /startedAt: Date\.now\(\)/.test(sourceText));
+check(
+  "按钮显示已耗时秒数",
+  sourceText.includes('t("testingElapsed"') && sourceText.includes("elapsedSeconds(testState, now)"),
+);
+check("秒数保留一位小数", /\(now - startedAt\) \/ 1000\)\.toFixed\(1\)/.test(sourceText));
+check("缺 startedAt 时不显示 NaN", /typeof startedAt !== "number"/.test(sourceText));
+// 时钟只在真有测试在跑时才走 —— 空转的 setInterval 会让整个面板每 200ms 重渲染一次。
+check("只在有测试时启时钟", /if \(!anyTesting\) return undefined;/.test(sourceText));
+check("时钟 200ms 一跳", /setInterval\(\(\) => setClock\(Date\.now\(\)\), 200\)/.test(sourceText));
+check("测试结束就停表", /clearInterval\(timer\)/.test(sourceText));
+
+// 已装载的服务读的是宿主里那份活连接，不是新起进程。文案要区分开，
+// 免得「秒回」被当成没真测（同时它是真的更快，也值得讲明白）。
+check("已装载时用另一句文案", sourceText.includes('"testOkHost"'));
+
+// 等待期还得解决两件事：别让用户连点，别让用户以为卡死了。
+//
+// 连点的代价这次实测过：每次点击都会为同一个服务再起一个进程，两个包运行器
+// 同时往同一份 npm 缓存里写，只会更慢、也更容易留下半成品。所以测试期间必须禁用。
+check(
+  "测试期间按钮禁用（防连点）",
+  /disabled: busy \|\| testState\?\.state === "running"/.test(sourceText),
+);
+// 超过几秒还没回来，最可能的原因就是包运行器在首次下载依赖 —— 而这恰好是用户
+// 最容易误判成「卡死了」的时刻。给句话，让等待有解释。
+check("慢测试有专门文案", sourceText.includes('t("testingSlow")'));
+check("慢的判定有阈值", /SLOW_TEST_MS = \d+/.test(sourceText));
+check("按已耗时判断，不靠猜", /now - state\.startedAt > SLOW_TEST_MS/.test(sourceText));
+check("只在测试中才提示", /state\?\.state === "running" &&/.test(sourceText));
+check("提示渲染在卡片里", /isSlowTest\(testState, now\) \? h\("p", \{ className: "MM_note" \}/.test(sourceText));
+
+// 错误文案现在可能是多行：宿主会把子进程 stderr 的尾部拼在原因后面
+// （见 lib/mcp/probe.js）。没有 pre-wrap 的话换行会被折叠成空格，几行日志糊成一段。
+check("错误框保留换行", /\.MM_err\{[^}]*white-space:pre-wrap/.test(sourceText));
 
 // ─────────────────── 汇总 ───────────────────
 
